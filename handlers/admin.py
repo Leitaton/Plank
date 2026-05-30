@@ -4,6 +4,7 @@ Restricted to OWNER_IDS.
 """
 
 import os
+import re
 import asyncio
 import aiohttp
 from io import BytesIO
@@ -419,6 +420,48 @@ def _save_sites(sites: list[str]):
         f.write("\n".join(sites) + "\n" if sites else "")
 
 
+_DOMAIN_RE = re.compile(r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$")
+
+
+def _normalize_site(raw: str) -> str | None:
+    """Extract a clean host (e.g. 'shop.example.com') from a messy line.
+
+    Handles 'https://example.com/products/x', 'example.com | approved',
+    'example.com:443', trailing slashes, and surrounding junk. Returns None
+    if no valid domain is found.
+    """
+    if not raw:
+        return None
+    s = raw.strip()
+    # Take the part before a result separator like "example.com | declined"
+    for sep in ("|", ",", "\t"):
+        if sep in s:
+            s = s.split(sep, 1)[0].strip()
+    if not s:
+        return None
+    # Pull a URL out of the line if one is present, else use the first token.
+    m = re.search(r"https?://[^\s|,]+", s)
+    candidate = m.group(0) if m else s.split()[0]
+    candidate = re.sub(r"^https?://", "", candidate, flags=re.IGNORECASE)
+    candidate = candidate.split("/")[0]          # drop path
+    candidate = candidate.split("@")[-1]         # drop any user:pass@
+    candidate = candidate.split(":")[0]          # drop port
+    candidate = candidate.strip().strip(".").lower()
+    if candidate.startswith("www."):
+        candidate = candidate[4:]
+    return candidate if _DOMAIN_RE.match(candidate) else None
+
+
+def _extract_sites_from_text(text: str) -> list[str]:
+    """Smartly pull a deduplicated, ordered list of site hosts from raw text."""
+    seen: dict[str, None] = {}
+    for line in text.splitlines():
+        host = _normalize_site(line)
+        if host and host not in seen:
+            seen[host] = None
+    return list(seen.keys())
+
+
 def _invalidate_caches():
     try:
         from utils.checkers import invalidate_sites_cache as inv_checkers
@@ -432,6 +475,18 @@ def _invalidate_caches():
         pass
 
 
+async def _get_random_proxy() -> str | None:
+    """Return a random alive proxy as a URL, or None if the pool is empty."""
+    try:
+        proxies = await run_in_db(get_all_proxies, True)
+    except Exception:
+        proxies = []
+    if not proxies:
+        return None
+    import random
+    return proxy_to_url(random.choice(proxies))
+
+
 async def site_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _owner_check(update):
         await update.message.reply_text(f"{section(E_SPARKLE, 'owner-only')}")
@@ -440,9 +495,10 @@ async def site_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text(
             f"{section(E_BOLT, 'Site Management')}\n\n"
-            f"╰ /site list  — show all sites\n"
-            f"╰ /site add   — reply to .txt file\n"
-            f"╰ /site check — validate + remove dead\n\n"
+            f"╰ /site list   — show all sites\n"
+            f"╰ /site add    — reply to .txt file\n"
+            f"╰ /site check  — validate + remove dead\n"
+            f"╰ /site export — download sites as .txt\n\n"
             f"╰ /sitechk · check sites via API\n"
             f"╰ /siteadd · add validated sites\n"
         )
@@ -479,7 +535,7 @@ async def site_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             file = await reply.document.get_file()
             data = await file.download_as_bytearray()
             text = data.decode("utf-8", errors="ignore")
-            new_sites = [l.strip() for l in text.splitlines() if l.strip()]
+            new_sites = await asyncio.to_thread(_extract_sites_from_text, text)
         except Exception:
             await msg.edit_text(f"{section(E_SPARKLE, 'failed to read file')}")
             return
@@ -521,15 +577,13 @@ async def site_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         async def check_one(site: str):
             async with semaphore:
-                result = await check_site(site)
-                is_valid = (
-                    result.get("valid", False) is True
-                    and result.get("card_response", "").upper() == "CARD_DECLINED"
-                )
+                result = await check_site(site, proxy=await _get_random_proxy())
+                is_valid = result.get("valid", False) is True
                 if is_valid:
                     price = result.get("price", "0.00")
+                    label = result.get("response", "") or result.get("card_response", "valid")
                     check_time = result.get("time", "")
-                    
+
                     is_fast = False
                     try:
                         time_val = float(str(check_time).replace("s", ""))
@@ -539,7 +593,7 @@ async def site_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         pass
 
                     if is_fast:
-                        alive_sites.append((site, f"VALID (${price})"))
+                        alive_sites.append((site, label))
                     else:
                         dead_sites.append((site, f"SLOW ({check_time})"))
                 else:
@@ -566,9 +620,29 @@ async def site_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 result_text += f"╰ ... +{len(dead_sites) - 5} more\n"
         await msg.edit_text(result_text)
 
+        if alive_sites:
+            content = "\n".join(f"{s} | {label}" for s, label in alive_sites)
+            buf = BytesIO(content.encode("utf-8"))
+            buf.name = "valid_sites.txt"
+            await update.message.reply_document(
+                buf, caption=f"{E_CHECK} valid sites · {len(alive_sites)}"
+            )
+
+    elif sub == "export":
+        sites = await asyncio.to_thread(_load_sites)
+        if not sites:
+            await update.message.reply_text(f"{section(E_SPARKLE, 'no sites to export')}")
+            return
+        content = "\n".join(sites) + "\n"
+        buf = BytesIO(content.encode("utf-8"))
+        buf.name = "sites.txt"
+        await update.message.reply_document(
+            buf, caption=f"{section(E_CHECK, f'Exported {len(sites)} sites')}"
+        )
+
     else:
         await update.message.reply_text(
-            f"{section(E_SPARKLE, 'unknown · use /site list|add|check')}"
+            f"{section(E_SPARKLE, 'unknown · use /site list|add|check|export')}"
         )
 
 
@@ -624,7 +698,7 @@ async def _execute_site_check(update: Update, context: ContextTypes.DEFAULT_TYPE
         all_valid = state["fast"] + state["slow"]
         if all_valid:
             for v in all_valid[-3:]:
-                update_text += f"\n{E_HEART} {E_CHECK} {v['site']} · ${v['price']}"
+                update_text += f"\n{E_HEART} {E_CHECK} {v['site']} | {v.get('response', 'valid')} · ${v['price']}"
 
         try:
             await context.bot.edit_message_text(
@@ -666,7 +740,7 @@ async def _execute_site_check(update: Update, context: ContextTypes.DEFAULT_TYPE
         if state["stopped"]:
             return
         async with semaphore:
-            result = await check_site(site)
+            result = await check_site(site, proxy=await _get_random_proxy())
 
         if state["stopped"]:
             return
@@ -680,7 +754,8 @@ async def _execute_site_check(update: Update, context: ContextTypes.DEFAULT_TYPE
             product = result.get("product", "?")
             gate = result.get("gate", "?")
             check_time = result.get("time", "?")
-            
+            response = result.get("response", "") or result.get("card_response", "valid")
+
             is_fast = False
             try:
                 time_val = float(str(check_time).replace("s", ""))
@@ -689,22 +764,15 @@ async def _execute_site_check(update: Update, context: ContextTypes.DEFAULT_TYPE
             except Exception:
                 pass
 
-            if is_fast:
-                state["fast"].append({
-                    "site": site,
-                    "price": price,
-                    "product": product,
-                    "gate": gate,
-                    "time": check_time,
-                })
-            else:
-                state["slow"].append({
-                    "site": site,
-                    "price": price,
-                    "product": product,
-                    "gate": gate,
-                    "time": check_time,
-                })
+            bucket = {
+                "site": site,
+                "price": price,
+                "product": product,
+                "gate": gate,
+                "time": check_time,
+                "response": response,
+            }
+            state["fast" if is_fast else "slow"].append(bucket)
         elif result.get("error"):
             state["error"].append((site, result["error"]))
         else:
@@ -738,7 +806,7 @@ async def sitechk_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file = await reply.document.get_file()
         data = await file.download_as_bytearray()
         text = data.decode("utf-8", errors="ignore")
-        sites = [l.strip() for l in text.splitlines() if l.strip()]
+        sites = await asyncio.to_thread(_extract_sites_from_text, text)
     except Exception:
         await update.message.reply_text(f"{section(E_SPARKLE, 'failed to read file')}")
         return
@@ -747,7 +815,6 @@ async def sitechk_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"{section(E_SPARKLE, 'no sites found in file')}")
         return
 
-    sites = list(dict.fromkeys(sites))
     await _execute_site_check(update, context, sites, title="Site Checker")
 
 
@@ -774,7 +841,7 @@ async def siteadd_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file = await reply.document.get_file()
         data = await file.download_as_bytearray()
         text = data.decode("utf-8", errors="ignore")
-        new_sites = [l.strip() for l in text.splitlines() if l.strip()]
+        new_sites = await asyncio.to_thread(_extract_sites_from_text, text)
     except Exception:
         await update.message.reply_text(f"{section(E_SPARKLE, 'failed to read file')}")
         return
@@ -925,7 +992,7 @@ async def sitechk_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
         if category in ("fast", "slow", "valid"):
-            content = "\n".join(v["site"] for v in results)
+            content = "\n".join(f"{v['site']} | {v.get('response', 'valid')}" for v in results)
         else:
             content = "\n".join(f"{s} | {r}" for s, r in results)
 

@@ -4,10 +4,46 @@ Calls the external Shopify checker API.
 """
 
 import asyncio
+import os
 import aiohttp
 import time
 
 from config import CHECKER_API_URL, MAX_PRICE
+
+# Project-root error log (portable; was previously a hardcoded absolute path)
+_ERROR_LOG = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "error.log"
+)
+
+
+# ── Response classification ──────────────────────────
+# Maps a raw checker response to a short label used for "valid site" exports.
+# A site is considered valid (live + processing) for any of these categories.
+_APPROVED = ("CHARGED", "APPROVED", "THANK_YOU", "THANKYOU", "ORDER_CONFIRMED",
+             "PAYMENT_SUCCESS", "SUCCESS", "PAID")
+_ORDER_PLACED = ("ORDER_PLACED", "ORDER_RECEIVED")
+_THREE_DS = ("3DS_REQUIRED", "3DS", "3D_SECURE", "AUTHENTICATION_REQUIRED",
+             "AUTH_REQUIRED", "VBV")
+_DECLINED = ("CARD_DECLINED", "DECLINED", "DO_NOT_HONOR", "INSUFFICIENT_FUNDS",
+             "GENERIC_DECLINE", "PICKUP_CARD", "TRANSACTION_NOT_ALLOWED")
+
+
+def classify_response(resp: str) -> tuple[bool, str]:
+    """Return (is_valid_site, short_label) for a checker response string.
+
+    Labels: 'approved', 'order_placed', '3d', 'declined', or '' when invalid.
+    """
+    r = (resp or "").upper()
+    if any(k in r for k in _APPROVED):
+        return True, "approved"
+    if any(k in r for k in _ORDER_PLACED):
+        return True, "order_placed"
+    if any(k in r for k in _THREE_DS):
+        return True, "3d"
+    if any(k in r for k in _DECLINED):
+        return True, "declined"
+    return False, ""
+
 
 # (Concurrency Limiter removed as it was causing global bottlenecking)
 
@@ -107,7 +143,7 @@ async def check_shopify(cc: str, month: str, year: str, cvv: str,
                         }
                     else:
                         resp_text = await resp.text()
-                        with open("/root/projects/PlankBot/error.log", "a") as f:
+                        with open(_ERROR_LOG, "a") as f:
                             f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Bad HTTP status: {resp.status} response: {resp_text[:500]}\n")
                     return _error_result(cc, month, year, cvv, "API_ERROR", elapsed=elapsed)
             except asyncio.TimeoutError:
@@ -115,7 +151,7 @@ async def check_shopify(cc: str, month: str, year: str, cvv: str,
                 return _error_result(cc, month, year, cvv, "TIMEOUT", elapsed=elapsed)
             except Exception as e:
                 import traceback
-                with open("/root/projects/PlankBot/error.log", "a") as f:
+                with open(_ERROR_LOG, "a") as f:
                     f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Request Exception: {str(e)}\n{traceback.format_exc()}\n")
                 elapsed = round(time.time() - start_time, 1)
                 return _error_result(cc, month, year, cvv, "API_ERROR", elapsed=elapsed)
@@ -163,11 +199,14 @@ async def check_shopify(cc: str, month: str, year: str, cvv: str,
 
 # ── Site checker (via external API) ──────────────────
 
-async def check_site(site: str) -> dict:
+async def check_site(site: str, proxy: str = None) -> dict:
     """Check a site via the external API.
-    Uses the /shopify endpoint with a test card to bypass the HTTP 400 error.
+
+    Endpoint: GET {CHECKER_API_URL}/shopify?site={site}&cc={cc}&proxy={proxy}
+    A site is "valid" if it processes the card to any real gateway response
+    (approved / order_placed / 3d / declined) within the price limit.
     """
-    import os, random
+    import random
     test_card = "4111111111111111|12|2030|123"
     if os.path.exists("site_cards.txt"):
         try:
@@ -179,15 +218,14 @@ async def check_site(site: str) -> dict:
             pass
 
     url_site = site if site.startswith("http") else f"https://{site}"
+    params = {"site": url_site, "cc": test_card, "max_price": str(MAX_PRICE)}
+    if proxy:
+        params["proxy"] = proxy
     try:
         session = await _get_api_session()
         async with session.get(
             f"{CHECKER_API_URL}/shopify",
-            params={
-                "site": url_site,
-                "cc": test_card,
-                "max_price": str(MAX_PRICE)
-            },
+            params=params,
             timeout=aiohttp.ClientTimeout(total=30),
         ) as resp:
             if resp.status == 200:
@@ -199,17 +237,16 @@ async def check_site(site: str) -> dict:
                 except ValueError:
                     price_val = 0.0
 
-                valid_responses = ("CARD_DECLINED", "3DS_REQUIRED", "INSUFFICIENT_FUNDS", "DO_NOT_HONOR")
-                
-                is_valid = (
-                    any(v in resp_str for v in valid_responses)
-                    and price_val <= MAX_PRICE
-                )
+                is_valid, label = classify_response(resp_str)
+                # Approved-class hits aren't price-gated; the rest must be cheap enough.
+                if is_valid and label not in ("approved", "order_placed"):
+                    is_valid = price_val <= MAX_PRICE
 
                 return {
                     "valid": is_valid,
                     "site": site,
                     "card_response": resp_str,
+                    "response": label,
                     "price": price_str,
                     "time": data.get("Time", data.get("time", "0s")),
                     "gate": data.get("Gate", data.get("gate", "UNKNOWN"))
