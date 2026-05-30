@@ -287,13 +287,20 @@ _bin_cache: dict[str, dict] = {}
 
 
 async def lookup_bin(bin_number: str) -> dict:
-    """Lookup BIN info with caching and shared session."""
+    """Lookup BIN info with Redis + in-memory caching and a shared session."""
     global _bin_session
-    from config import BIN_API_URL
+    from config import BIN_API_URL, BIN_CACHE_TTL
+    import redis_client
 
     bin6 = bin_number[:6]
     if bin6 in _bin_cache:
         return _bin_cache[bin6]
+
+    cache_key = f"bin:{bin6}"
+    cached = await redis_client.cache_get_json(cache_key)
+    if cached is not None:
+        _bin_cache[bin6] = cached
+        return cached
 
     try:
         if _bin_session is None or _bin_session.closed:
@@ -315,6 +322,7 @@ async def lookup_bin(bin_number: str) -> dict:
                     "country_emoji": data.get("country_flag") or "",
                 }
                 _bin_cache[bin6] = result
+                await redis_client.cache_set_json(cache_key, result, ttl=BIN_CACHE_TTL)
                 return result
     except Exception:
         pass

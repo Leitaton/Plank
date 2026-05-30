@@ -5,10 +5,24 @@ Owners can also hot-edit values via /admin commands.
 """
 
 import json
+import os
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ── Core ──────────────────────────────────────────────
 BOT_TOKEN = "8800823630:AAHs-vCEJswSlaqUMVPW_4oUrV0hUxWsIVs"
 CHECKER_API_URL = "https://api.iplank.pro"
+
+# ── Redis (Upstash) ───────────────────────────────────
+# Set REDIS_URL in the environment / .env, e.g.
+#   rediss://default:<password>@<host>.upstash.io:6379
+# Leave unset to disable Redis (bot falls back to in-memory caches).
+REDIS_URL = os.getenv("REDIS_URL", "")
+
+# Default TTL (seconds) for cached BIN lookups
+BIN_CACHE_TTL = int(os.getenv("BIN_CACHE_TTL", "86400"))
 MAX_PRICE = 8.00  # Maximum acceptable product price for Shopify checks (in USD)
 MAX_SITE_TIME = 5.0 # Maximum time in seconds for a site to respond before being marked as slow
 MAX_CONCURRENT_API_REQUESTS = 100  # Max concurrent requests to checker API
