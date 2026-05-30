@@ -1,4 +1,0 @@
-2026-05-22 12:30:18,540 [Plank] INFO: Database initialised.
-2026-05-22 12:30:18,624 [Plank] INFO: Plank starting...
-2026-05-22 12:30:18,734 [apscheduler.scheduler] INFO: Scheduler started
-2026-05-22 12:30:18,734 [telegram.ext.Application] INFO: Application started
