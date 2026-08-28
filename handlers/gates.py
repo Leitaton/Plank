@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from config import PLANS, BRAND_NAME, SHOPIFY_SITES_FILE, HIT_PUBLIC_CHAT_ID, HIT_PRIVATE_CHANNEL_ID
+from config import PLANS, BRAND_NAME, SHOPIFY_SITES_FILE, HIT_PUBLIC_CHAT_ID, HIT_PRIVATE_CHANNEL_ID, OWNER_DEBUG_MODE
 from database import (
     ensure_user, get_user, deduct_credits, log_hit, get_user_proxies, run_in_db,
     save_mass_session, get_mass_session,
@@ -106,14 +106,39 @@ def _categorize(response: str) -> str:
                             "DO_NOT_HONOR", "PICKUP_CARD", "LIMIT_EXCEEDED",
                             "AUTHENTICATION_REQUIRED")):
         return "approved"
-    if any(e in r for e in ("ERROR", "TIMEOUT", "PRICE_OVER_MAX", "NO_PRODUCT", "NO PRODUCT", "NO_SESSION_TOKEN", "PRODUCT_OVER_MAIN", "PRODUCT_OVER_MAX")):
+    
+    SITE_ERRORS = (
+        "ERROR", "TIMEOUT", "PRICE_OVER_MAX", "NO_PRODUCT", "NO PRODUCT", "NO_SESSION_TOKEN",
+        "PRODUCT_OVER_MAIN", "PRODUCT_OVER_MAX", "SITE_REQUIRES_LOGIN",
+        "BUYER_IDENTITY_PRESENTMENT_CURRENCY_DOES_NOT_MATCH",
+        "DELIVERY_NO_DELIVERY_STRATEGY_AVAILABLE_FOR_MERCHANDISE_LINE",
+        "PAYMENTS_INVALID_GATEWAY_FOR_DEVELOPMENT_STORE", "NO_PAYMENT_METHOD",
+        "DELIVERY_ADDRESS2_REQUIRED", "DELIVERY_NO_DELIVERY_STRATEGY_AVAILABLE",
+        "TAX_NEW_TAX_MUST_BE_ACCEPTED", "MERCHANDISE_EXPECTED_PRICE_MISMATCH",
+        "DELIVERY_DELIVERY_LINE_DETAIL_CHANGED", "REQUEST_ERROR",
+        "PAYMENTS_PROPOSED_GATEWAY_UNAVAILABLE", "PAYMENTS_PAYMENT_FLEXIBILITY_TERMS_ID_MISMATCH",
+        "ARTIFACT_DISSATISFACTION"
+    )
+    if any(e in r for e in SITE_ERRORS):
         return "error"
     return "dead"
 
 
 def _should_retry(response: str) -> bool:
     r = response.upper()
-    return any(w in r for w in ("PRICE_OVER_MAX", "API_ERROR", "TIMEOUT", "NO PRODUCT", "NO_PRODUCT", "NO_SESSION_TOKEN", "PRODUCT_OVER_MAIN", "PRODUCT_OVER_MAX"))
+    SITE_ERRORS = (
+        "ERROR", "TIMEOUT", "PRICE_OVER_MAX", "NO_PRODUCT", "NO PRODUCT", "NO_SESSION_TOKEN",
+        "PRODUCT_OVER_MAIN", "PRODUCT_OVER_MAX", "SITE_REQUIRES_LOGIN",
+        "BUYER_IDENTITY_PRESENTMENT_CURRENCY_DOES_NOT_MATCH",
+        "DELIVERY_NO_DELIVERY_STRATEGY_AVAILABLE_FOR_MERCHANDISE_LINE",
+        "PAYMENTS_INVALID_GATEWAY_FOR_DEVELOPMENT_STORE", "NO_PAYMENT_METHOD",
+        "DELIVERY_ADDRESS2_REQUIRED", "DELIVERY_NO_DELIVERY_STRATEGY_AVAILABLE",
+        "TAX_NEW_TAX_MUST_BE_ACCEPTED", "MERCHANDISE_EXPECTED_PRICE_MISMATCH",
+        "DELIVERY_DELIVERY_LINE_DETAIL_CHANGED", "REQUEST_ERROR",
+        "PAYMENTS_PROPOSED_GATEWAY_UNAVAILABLE", "PAYMENTS_PAYMENT_FLEXIBILITY_TERMS_ID_MISMATCH",
+        "ARTIFACT_DISSATISFACTION", "API_ERROR"
+    )
+    return any(w in r for w in SITE_ERRORS)
 
 
 # ── Single Shopify ────────────────────────────────────
@@ -154,15 +179,15 @@ async def sh_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     site = random.choice(sites) if sites else "kyliebaby.com"
 
     is_priority = db_user.get("plan", "dirt") in ("diamond", "bedrock")
-    # Retry on retriable errors with site and proxy rotation (up to 3 attempts total)
-    for attempt in range(3):
+    # Retry on retriable errors with site and proxy rotation (up to 5 attempts total)
+    for attempt in range(5):
         result = await check_shopify(
             parts[0], parts[1], parts[2], parts[3],
             site=site, proxy=proxy_to_url(user_proxy) if user_proxy else None,
             is_priority=is_priority,
         )
         response = result.get("Response", "CARD_DECLINED")
-        if not _should_retry(response) or attempt == 2:
+        if not _should_retry(response) or attempt == 4:
             break
         site = random.choice(sites) if sites else site
         new_proxy = await _get_user_proxy(user.id)
@@ -170,6 +195,10 @@ async def sh_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_proxy = new_proxy
 
     category = _categorize(response)
+    if category == "error":
+        category = "dead"
+        response = "CARD_DECLINED"
+
     price = result.get("Price", "0.00")
     gate = result.get("Gate", "Shopify Payments")
     check_time = result.get("Time", "0s")
@@ -192,6 +221,9 @@ async def sh_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{E_HEART} gate: {gate}\n"
         f"{E_HEART} amt: ${price} · {check_time}\n"
     )
+    if OWNER_DEBUG_MODE.get(user.id, False):
+        text += f"{E_HEART} site: {result.get('Site', site)}\n"
+    
     await msg.edit_text(text)
 
     if category == "charged":
@@ -286,25 +318,33 @@ async def _execute_mass(
             sites = await get_shopify_sites()
             card_site = random.choice(sites) if sites else (site or "kyliebaby.com")
 
-            for attempt in range(3):
+            for attempt in range(5):
                 result = await checker_fn(
                     parts[0], parts[1], parts[2], parts[3],
                     site=card_site, proxy=proxy,
                     is_priority=is_priority,
                 )
                 response = result.get("Response", "CARD_DECLINED")
-                if not _should_retry(response) or attempt == 2:
+                if not _should_retry(response) or attempt == 4:
                     break
                 card_site = random.choice(sites) if sites else card_site
                 if user_proxies:
                     proxy = proxy_to_url(random.choice(user_proxies))
 
             category = _categorize(response)
+            if category == "error":
+                category = "dead"
+                response = "CARD_DECLINED"
+
             price = result.get("Price", "0.00")
 
             state["processed"] += 1
             state[category] += 1
-            state["results"][category].append(f"{card} | ${price} | {response}")
+            card_site = result.get("Site", site)
+            if OWNER_DEBUG_MODE.get(user.id, False):
+                state["results"][category].append(f"{card} | ${price} | {response} | {card_site}")
+            else:
+                state["results"][category].append(f"{card} | ${price} | {response}")
 
             await run_in_db(log_hit, user.id, gate_name, card, response, price,
                            result.get("Site", site))
@@ -464,6 +504,7 @@ async def _run_mass(
         "user_proxies": user_proxies,
         "cooldown": cooldown,
         "last_active": time.time(),
+        "start_time": time.time(),
     }
     _sessions[session_id] = state
     await run_in_db(save_mass_session, state)
@@ -494,6 +535,14 @@ async def _run_mass(
     await _execute_mass(state, cards, context, user)
 
 
+def _fmt_duration(seconds: float) -> str:
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    m, s = divmod(seconds, 60)
+    return f"{m}m {s:02d}s"
+
+
 def _build_mass_text(state: dict, finished: bool = False) -> str:
     total = state["total"]
     processed = state["processed"]
@@ -501,27 +550,24 @@ def _build_mass_text(state: dict, finished: bool = False) -> str:
     bar = progress_bar(processed, total)
     status = "done" if finished else (f"{pct}%" if not state["stopped"] else "stopped")
 
+    elapsed = time.time() - state.get("start_time", time.time())
+    elapsed_str = _fmt_duration(elapsed)
+
+    if processed > 0 and not finished:
+        eta_secs = (elapsed / processed) * (total - processed)
+        eta_str = _fmt_duration(eta_secs)
+    elif finished:
+        eta_str = "0s"
+    else:
+        eta_str = "..."
+
     gate = state['gate']
     text = (
         f"{E_FIRE} <b>{gate}</b> · {status}\n\n"
-        f"{E_HEART} progress: {bar} <b>{processed}/{total}</b>\n\n"
-        f"{E_MONEY} Charged: <b>{state['charged']}</b>\n"
-        f"{E_CHECK} Approved: <b>{state['approved']}</b>\n"
-        f"{E_CROSS} Dead: <b>{state['dead']}</b>\n"
-        f"{E_ERROR} Error: <b>{state['error']}</b>\n"
+        f"{E_HEART} progress: {bar} <b>{processed}/{total}</b>\n"
+        f"⏱ elapsed: <b>{elapsed_str}</b>  |  eta: <b>{eta_str}</b>\n\n"
+        f"{E_MONEY} <b>{state['charged']}</b> / {E_CHECK} <b>{state['approved']}</b> / {E_CROSS} <b>{state['dead']}</b> / {E_ERROR} <b>{state['error']}</b>\n"
     )
-
-    hits = []
-    for cat in ("charged", "approved"):
-        for entry in state["results"][cat][-3:]:
-            e = E_MONEY if cat == "charged" else E_CHECK
-            # Format cards in monospace using HTML code tags
-            card_parts = entry.split(" | ")
-            card_num = card_parts[0]
-            card_details = " | ".join(card_parts[1:])
-            hits.append(f"{E_HEART} {e} <code>{card_num}</code> | {card_details}")
-    if hits:
-        text += "\n" + "\n".join(hits[-3:]) + "\n"
 
     return text
 

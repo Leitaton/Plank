@@ -28,7 +28,7 @@ def load_env(path=".env"):
 
 load_env(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
-BOT_TOKEN = "8800823630:AAHs-vCEJswSlaqUMVPW_4oUrV0hUxWsIVs"
+BOT_TOKEN = "8863097709:AAEjlcMOhvHE3qWgupS_zhuQ23nNNAe8Rno"
 OWNER_ID  = 7455136486
 DB_PATH   = "/root/projects/PlankBot/plankbot.db"
 POLL_SEC  = int(os.getenv("POLL_SEC", "5"))

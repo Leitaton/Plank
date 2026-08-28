@@ -25,26 +25,68 @@ from config import CHAT_INVITE_LINK, CHANNEL_INVITE_LINK, CUSTOM_PLAN_CONTACT
 from utils.emojis import (
     E_CHECK, E_STAR, E_DIAMOND, E_DOC, E_MONEY, E_CROSS, E_ERROR,
     E_STOP, E_RETRY, E_USER, E_CHART, E_GIFT, E_KEY, E_BAN,
-    E_CHANNEL, E_GROUP, E_BROADCAST, E_CHAIN, get_emoji
+    E_CHANNEL, E_GROUP, E_BROADCAST, E_CHAIN, get_emoji,
+    E_JOIN_GROUP, E_JOIN_CHANNEL, E_HELP_GATES, E_HELP_TOOLS, E_HELP_CREDITS, E_HELP_ALL,
+    E_HELP_PROFILE
 )
 
 
 def join_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton(f"{E_CHANNEL} Join Channel", url=CHANNEL_INVITE_LINK),
-            InlineKeyboardButton(f"{E_GROUP} Join Group", url=CHAT_INVITE_LINK),
+            InlineKeyboardButton(
+                f"{E_CHANNEL} Join Channel", url=CHANNEL_INVITE_LINK,
+                api_kwargs={"style": "primary"}
+            ),
+            InlineKeyboardButton(
+                f"{E_GROUP} Join Group", url=CHAT_INVITE_LINK,
+                api_kwargs={"style": "success"}
+            ),
         ],
-        [InlineKeyboardButton(f"{E_CHECK} Verify", callback_data="verify_join")],
+        [InlineKeyboardButton(
+            f"{E_CHECK} Verify", callback_data="verify_join",
+            api_kwargs={"style": "danger"}
+        )],
+    ])
+
+
+def help_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                f"{E_HELP_GATES} Gates", callback_data="help_gates",
+                api_kwargs={"style": "primary"}
+            ),
+            InlineKeyboardButton(
+                f"{E_HELP_TOOLS} Tools", callback_data="help_tools",
+                api_kwargs={"style": "success"}
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                f"{E_HELP_CREDITS} Credits", callback_data="help_credits",
+                api_kwargs={"style": "primary"}
+            ),
+            InlineKeyboardButton(
+                f"{E_HELP_PROFILE} Profile", callback_data="help_profile",
+                api_kwargs={"style": "success"}
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                f"{E_HELP_ALL} All Commands", callback_data="help_all",
+                api_kwargs={"style": "danger"}
+            ),
+        ]
     ])
 
 
 def plans_keyboard() -> InlineKeyboardMarkup:
     cobble_emoji = get_emoji("cobblestone", "⚡️")
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(f"{cobble_emoji} Cobblestone — $5/wk", callback_data="plan_cobblestone")],
+        [InlineKeyboardButton(f"{cobble_emoji} Iron — $5/wk", callback_data="plan_cobblestone")],
         [InlineKeyboardButton(f"{E_STAR} Diamond — $15/mo", callback_data="plan_diamond")],
-        [InlineKeyboardButton(f"{E_DIAMOND} Bedrock — $30/mo", callback_data="plan_bedrock")],
+        [InlineKeyboardButton(f"{E_DIAMOND} Netherite — $30/mo", callback_data="plan_bedrock")],
         [InlineKeyboardButton(f"{E_DOC} Custom Plans — {CUSTOM_PLAN_CONTACT}", url=f"https://t.me/{CUSTOM_PLAN_CONTACT.lstrip('@')}")],
     ])
 

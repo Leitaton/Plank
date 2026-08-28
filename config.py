@@ -12,14 +12,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ── Core ──────────────────────────────────────────────
-BOT_TOKEN = "8800823630:AAHs-vCEJswSlaqUMVPW_4oUrV0hUxWsIVs"
+BOT_TOKEN = "8863097709:AAEjlcMOhvHE3qWgupS_zhuQ23nNNAe8Rno"
 CHECKER_API_URL = "https://api.iplank.pro"
 
 # ── Redis (Upstash) ───────────────────────────────────
 # Set REDIS_URL in the environment / .env, e.g.
 #   rediss://default:<password>@<host>.upstash.io:6379
 # Leave unset to disable Redis (bot falls back to in-memory caches).
-REDIS_URL = os.getenv("REDIS_URL", "")
+REDIS_URL = os.getenv("REDIS_URL", "rediss://default:gQAAAAAAAaw7AAIgcDFkNDljMjQ2MzZjZDM0MGZlOTVkY2UyN2ZlMDU0OWI3YQ@divine-lemur-109627.upstash.io:6379")
 
 # Default TTL (seconds) for cached BIN lookups
 BIN_CACHE_TTL = int(os.getenv("BIN_CACHE_TTL", "86400"))
@@ -47,7 +47,7 @@ HIT_PUBLIC_CHAT_ID = -1003979682778
 HIT_PRIVATE_CHANNEL_ID = -5154377985
 
 # ── Owners (Telegram user IDs) ───────────────────────
-OWNER_IDS = [6636230545, 7167704900]
+OWNER_IDS = [7985375134]
 
 # ── Plans ─────────────────────────────────────────────
 PLANS = {
@@ -64,7 +64,7 @@ PLANS = {
     },
 
     "cobblestone": {
-        "display": "Cobblestone",
+        "display": "Iron",
         "emoji": "⚡️",
         "price": "$5/week",
         "credits": 5000,
@@ -88,7 +88,7 @@ PLANS = {
     },
 
     "bedrock": {
-        "display": "Bedrock",
+        "display": "Netherite",
         "emoji": "💎",
         "price": "$30/mo",
         "credits": 100000,
@@ -133,3 +133,7 @@ CARD_PATTERN = (
     r'(\d{2,4})\s*[|/:\s]\s*'
     r'(\d{3,4})\b'
 )
+
+# ── Owner Debug Mode ──────────────────────────────────
+OWNER_DEBUG_MODE = {}
+

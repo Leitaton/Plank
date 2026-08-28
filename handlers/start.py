@@ -7,9 +7,9 @@ from telegram.ext import ContextTypes
 
 from config import PLANS, BRAND_NAME, CUSTOM_PLAN_CONTACT
 from database import ensure_user, run_in_db
-from utils.emojis import section, bold, separator, E_BOLT, E_STAR, E_MONEY, E_TOOLS, E_ARROW, E_HEART, E_SPARKLE, get_emoji, get_plan_emoji
+from utils.emojis import section, bold, separator, E_BOLT, E_STAR, E_MONEY, E_TOOLS, E_ARROW, E_HEART, E_SPARKLE, get_emoji, get_plan_emoji, E_USER
 from utils.helpers import check_membership
-from utils.keyboards import join_keyboard, plans_keyboard
+from utils.keyboards import join_keyboard, plans_keyboard, help_keyboard
 
 
 async def membership_guard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -42,12 +42,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await membership_guard(update, context):
         return
 
-    text = (
-        f"{section(E_SPARKLE, BRAND_NAME)}\n\n"
-        f"╰ premium checker bot\n"
-        f"╰ type /help for cmds\n"
-    )
-    await update.message.reply_text(text)
+    await help_cmd(update, context)
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -63,9 +58,54 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"╰ /split · split  │  /genad · addr\n"
         f"╰ /scr · scrape cards\n\n"
         f"{section(E_MONEY, 'Credits')}\n"
+        f"╰ /daily /balance /redeem /plans\n\n"
+        f"{section(E_USER, 'Profile')}\n"
+        f"╰ /profile · your stats & info\n"
+    )
+    # Support sending help commands when invoked as button or message
+    msg = update.message or (update.callback_query.message if update.callback_query else None)
+    if msg:
+        await msg.reply_text(text, reply_markup=help_keyboard())
+
+
+async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+
+    gates_text = (
+        f"{section(E_BOLT, 'Gates')}\n"
+        f"╰ /sh · shopify  │  /msh · mass\n\n"
+    )
+    tools_text = (
+        f"{section(E_TOOLS, 'Tools')}\n"
+        f"╰ /vbv /mvbv · 3ds check\n"
+        f"╰ /bin · lookup  │  /proxy · manage\n"
+        f"╰ /split · split  │  /genad · addr\n"
+        f"╰ /scr · scrape cards\n\n"
+    )
+    credits_text = (
+        f"{section(E_MONEY, 'Credits')}\n"
         f"╰ /daily /balance /redeem /plans\n"
     )
-    await update.message.reply_text(text)
+    profile_text = (
+        f"{section(E_USER, 'Profile')}\n"
+        f"╰ /profile · your stats & info\n"
+    )
+
+    if data == "help_gates":
+        text = gates_text
+    elif data == "help_tools":
+        text = tools_text
+    elif data == "help_credits":
+        text = credits_text
+    elif data == "help_profile":
+        text = profile_text
+    else:  # help_all
+        text = gates_text + tools_text + credits_text + profile_text
+
+    await query.edit_message_text(text, reply_markup=help_keyboard())
 
 
 async def plans_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):

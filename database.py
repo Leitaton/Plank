@@ -223,6 +223,60 @@ def get_credits(user_id: int) -> int:
     return user["credits"]
 
 
+def get_profile_stats(target_user_id: int) -> dict | None:
+    with get_db() as db:
+        user_row = db.execute("SELECT * FROM users WHERE user_id = ?", (target_user_id,)).fetchone()
+        if not user_row:
+            return None
+        
+        # Total checks
+        total_checks = db.execute("SELECT COUNT(*) FROM hit_log WHERE user_id = ?", (target_user_id,)).fetchone()[0]
+        
+        # Retrieve all check responses for this user to calculate hits
+        rows = db.execute("SELECT response FROM hit_log WHERE user_id = ?", (target_user_id,)).fetchall()
+        
+        # Hit is charged or approved
+        def _is_hit(resp: str) -> bool:
+            r = (resp or "").upper()
+            if any(c in r for c in ("CHARGED", "ORDER_PLACED", "THANK_YOU", "THANKYOU", "ORDER_PROCESSING", "PAYMENT_SUCCESS", "PAID", "APPROVED")):
+                return True
+            if any(a in r for a in ("3DS_REQUIRED", "3DS", "INSUFFICIENT_FUNDS", "INVALID_CVC", "LIMIT_EXCEEDED", "AUTHENTICATION_REQUIRED", "DO_NOT_HONOR")):
+                return True
+            return False
+            
+        hits_count = sum(1 for r in rows if _is_hit(r["response"]))
+        
+        # Rank based on checks descending
+        all_users_checks = db.execute("""
+            SELECT u.user_id, COALESCE(h.cnt, 0) as checks
+            FROM users u
+            LEFT JOIN (
+                SELECT user_id, COUNT(*) as cnt FROM hit_log GROUP BY user_id
+            ) h ON u.user_id = h.user_id
+        """).fetchall()
+        
+        # Sort users by checks descending, then user_id (for stable sort)
+        sorted_users = sorted(all_users_checks, key=lambda x: x["checks"], reverse=True)
+        
+        rank = 1
+        for idx, u in enumerate(sorted_users, 1):
+            if u["user_id"] == target_user_id:
+                rank = idx
+                break
+                
+        return {
+            "total_checks": total_checks,
+            "hits_count": hits_count,
+            "rank": rank,
+            "total_users": len(sorted_users),
+            "joined_at": user_row["joined_at"],
+            "plan": user_row["plan"],
+            "plan_expires": user_row["plan_expires"],
+            "credits": user_row["credits"],
+            "username": user_row["username"]
+        }
+
+
 def set_last_daily(user_id: int):
     with get_db() as db:
         db.execute("UPDATE users SET last_daily=? WHERE user_id=?", (time.time(), user_id))

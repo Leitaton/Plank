@@ -168,8 +168,8 @@ E_FIRE = DynamicEmoji("fire", "🔥")
 E_EARTH = DynamicEmoji("earth", "🌍")
 E_ARROW = DynamicEmoji("arrow", "▸")
 E_HEART = DynamicEmoji("heart", "♡")
-E_PROGRESS_FILLED = DynamicEmoji("progress_filled", "🌸")
-E_PROGRESS_EMPTY = DynamicEmoji("progress_empty", "💮")
+E_PROGRESS_FILLED = DynamicEmoji("progress_filled", "●")
+E_PROGRESS_EMPTY = DynamicEmoji("progress_empty", "○")
 E_SPARKLE = DynamicEmoji("sparkle", "✦")
 E_PAW = DynamicEmoji("paw", "🐾")
 E_STOP = DynamicEmoji("stop", "⊖")
@@ -186,14 +186,25 @@ E_COBBLESTONE = DynamicEmoji("cobblestone", "⚡️")
 E_DIAMOND_PLAN = DynamicEmoji("diamond_plan", "⭐️")
 E_BEDROCK = DynamicEmoji("bedrock", "💎")
 E_SEPARATOR_CHAR = DynamicEmoji("separator_char", "♡")
+E_MAINTENANCE = DynamicEmoji("maintenance", "🚧")
+E_PACKAGE = DynamicEmoji("package", "📦")
+E_WRENCH = DynamicEmoji("wrench", "🔧")
+E_JOIN_GROUP = DynamicEmoji("join_group", "🔵")
+E_JOIN_CHANNEL = DynamicEmoji("join_channel", "🔴")
+E_HELP_GATES = DynamicEmoji("help_gates", "⚡️")
+E_HELP_TOOLS = DynamicEmoji("help_tools", "⚙️")
+E_HELP_CREDITS = DynamicEmoji("help_credits", "💰")
+E_HELP_ALL = DynamicEmoji("help_all", "✨")
+E_HELP_PROFILE = DynamicEmoji("help_profile", "👤")
+E_PERFORMANCE = DynamicEmoji("performance", "📰")
 
 
 # ── Separator ─────────────────────────────────────────
 def separator(text: str = "") -> str:
     sep = get_emoji("separator_char", "─")
     if text:
-        return f"{sep * 3}  {text}  {sep * 3}"
-    return sep * 30
+        return f"<code>{sep * 3}</code>  {text}  <code>{sep * 3}</code>"
+    return f"<code>{sep * 15}</code>"
 
 
 def get_plan_emoji(plan_name: str) -> str:

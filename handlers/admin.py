@@ -12,7 +12,7 @@ from io import BytesIO
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from config import PLANS, BRAND_NAME, OWNER_IDS, SHOPIFY_SITES_FILE, CHECKER_API_URL, MAX_SITE_TIME
+from config import PLANS, BRAND_NAME, OWNER_IDS, SHOPIFY_SITES_FILE, CHECKER_API_URL, MAX_SITE_TIME, OWNER_DEBUG_MODE
 from database import (
     ensure_user, get_user, set_plan, add_credits,
     ban_user, unban_user, get_all_users, get_user_count,
@@ -24,6 +24,7 @@ from utils.emojis import (
     E_CROWN, E_GIFT, E_MONEY, E_CHECK, E_CROSS, E_ARROW, E_ERROR,
     E_USER, E_CHART, E_KEY, E_SHIELD, E_FIRE, E_CHAIN, E_BOLT,
     E_SPARKLE, E_SPARKLES, E_HEART, get_plan_emoji,
+    E_PACKAGE, E_WRENCH,
 )
 from utils.helpers import (
     is_owner, generate_redeem_code, parse_duration,
@@ -1076,7 +1077,7 @@ async def backup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     import zipfile
     from io import BytesIO
 
-    status_msg = await update.message.reply_text("📦 Preparing backup of all source files...")
+    status_msg = await update.message.reply_text(f"{E_PACKAGE} Preparing backup of all source files...")
 
     try:
         zip_buffer = BytesIO()
@@ -1106,5 +1107,61 @@ async def backup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.delete()
     except Exception as e:
         await status_msg.edit_text(f"{E_CROSS} Failed to create backup: {str(e)}")
+
+
+async def siterem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: remove a specific site from the bot's Shopify sites list.
+    Usage: /siterem domain.com
+    """
+    if not _owner_check(update):
+        await update.message.reply_text(f"{section(E_SPARKLE, 'owner-only')}")
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            f"{section(E_CROSS, 'Remove Site')}\n\n"
+            f"Usage: /siterem domain.com\n"
+        )
+        return
+
+    target_site = context.args[0].strip().lower()
+    normalized = _normalize_site(target_site) or target_site
+
+    existing = await asyncio.to_thread(_load_sites)
+    existing_lower = [s.lower() for s in existing]
+    
+    if normalized not in existing_lower:
+        await update.message.reply_text(f"{E_CROSS} Site {bold(normalized)} is not in the list.")
+        return
+
+    # Keep original casing of other sites, remove target_site case-insensitively
+    updated_sites = [s for s in existing if s.lower() != normalized]
+    await asyncio.to_thread(_save_sites, updated_sites)
+    _invalidate_caches()
+
+    await update.message.reply_text(
+        f"{E_CHECK} Removed site: {bold(normalized)}\n"
+        f"╰ total remaining: {bold(str(len(updated_sites)))}\n",
+        parse_mode="HTML"
+    )
+
+
+async def debug_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: toggle owner debug mode."""
+    if not _owner_check(update):
+        await update.message.reply_text(f"{section(E_SPARKLE, 'owner-only')}")
+        return
+
+    user = update.effective_user
+    current_state = OWNER_DEBUG_MODE.get(user.id, False)
+    new_state = not current_state
+    OWNER_DEBUG_MODE[user.id] = new_state
+
+    status_str = "ENABLED (site URLs will be appended to results)" if new_state else "DISABLED"
+    await update.message.reply_text(
+        f"{E_WRENCH} Owner Debug Mode: {bold(status_str)}",
+        parse_mode="HTML"
+    )
+
 
 

@@ -223,11 +223,11 @@ class TestPlankBot(unittest.TestCase):
         with patch("utils.checkers._get_api_session", AsyncMock(return_value=mock_session)):
             res = asyncio.run(check_shopify("4111111111111111", "12", "2028", "123", site="site1.com"))
         
-        # Since we kept failing, it should have rotated across all sites and finally returned "NO_PRODUCT"
+        # Since we kept failing, it should have rotated across sites and finally returned "NO_PRODUCT"
         self.assertEqual(res["Response"], "NO_PRODUCT")
         
-        # Check that it called get 6 times in total (1 initial + 5 retries)
-        self.assertEqual(mock_session.get.call_count, 6)
+        # Check that it called get 3 times in total (1 initial + 2 retries)
+        self.assertEqual(mock_session.get.call_count, 3)
         
         # Verify that all target sites were unique (site rotation)
         called_sites = []
@@ -235,7 +235,79 @@ class TestPlankBot(unittest.TestCase):
             called_sites.append(call[1]["params"].get("site"))
         
         # The sites list contains unique sites
-        self.assertEqual(len(set(called_sites)), 6)
+        self.assertEqual(len(set(called_sites)), 3)
+
+    def test_new_api_responses_mapping(self):
+        cases = [
+            ("CHARGE_SUCCESS! ✅", "CHARGED", "True", "True"),
+            ("3DS_SECURED! [Not charged] ❎", "3DS_REQUIRED", "False", "True"),
+            ("INCORRECT_CVC!✅", "3DS_REQUIRED", "False", "True"),  # INVALID_CVC gets masked to 3DS_REQUIRED in check_shopify
+            ("INSUFFICIENT FUNDS !✅", "INSUFFICIENT_FUNDS", "False", "True"),
+            ("NO_PRODUCT: error detail", "NO_PRODUCT", "False", "False"),
+            ("GENERIC_ERROR", "CARD_DECLINED", "False", "False"),
+            ("PAYMENT_FAILED", "CARD_DECLINED", "False", "False"),
+            ("PROCESSING_ERROR", "CARD_DECLINED", "False", "False"),
+            ("SUBMIT_FAILED", "CARD_DECLINED", "False", "False"),
+            ("SUBMIT_REJECTED", "CARD_DECLINED", "False", "False"),
+            ("FAILED_RECEIPT", "CARD_DECLINED", "False", "False"),
+            ("CART_FAILED", "API_ERROR", "False", "False"),
+            ("TOKENIZATION_FAILED", "API_ERROR", "False", "False"),
+            ("SITE_REQUIRES_LOGIN", "API_ERROR", "False", "False"),
+            ("CHECKPOINTDENIED", "CARD_DECLINED", "False", "False"),
+        ]
+        
+        for raw_resp, expected_resp, expected_charged, expected_approved in cases:
+            mock_session = MagicMock()
+            mock_resp = MagicMock()
+            mock_resp.status = 200
+            mock_resp.json = AsyncMock(return_value={
+                "card_response": raw_resp,
+                "price": "0.00",
+                "gate": "Shopify Payments",
+                "site": "example.com"
+            })
+            
+            mock_cm = AsyncMock()
+            mock_cm.__aenter__.return_value = mock_resp
+            mock_session.get.return_value = mock_cm
+            
+            with patch("utils.checkers._get_api_session", AsyncMock(return_value=mock_session)):
+                res = asyncio.run(check_shopify("4111111111111111", "12", "2028", "123", site="example.com"))
+            
+            self.assertEqual(res["Response"], expected_resp)
+            self.assertEqual(res["Charged"], expected_charged)
+            self.assertEqual(res["Approved"], expected_approved)
+
+    def test_check_site_logic(self):
+        from utils.checkers import check_site
+        cases = [
+            ("CARD_DECLINED", True, None),
+            ("EXPIRED_CARD", False, None),
+            ("CART_FAILED", False, "API_ERROR"),
+            ("GENERIC_ERROR", True, None),
+            ("CHARGE_SUCCESS! ✅", True, None),
+        ]
+        for raw_resp, expected_valid, expected_error in cases:
+            mock_session = MagicMock()
+            mock_resp = MagicMock()
+            mock_resp.status = 200
+            mock_resp.json = AsyncMock(return_value={
+                "Response": raw_resp,
+                "price": "0.00",
+                "gate": "Shopify Payments",
+                "site": "example.com"
+            })
+            
+            mock_cm = AsyncMock()
+            mock_cm.__aenter__.return_value = mock_resp
+            mock_session.get.return_value = mock_cm
+            
+            with patch("utils.checkers._get_api_session", AsyncMock(return_value=mock_session)):
+                res = asyncio.run(check_site("example.com"))
+            
+            self.assertEqual(res["valid"], expected_valid)
+            self.assertEqual(res.get("error"), expected_error)
+
 
     def test_credits_unlimited_and_limited(self):
         from database import get_db, ensure_user, add_credits, deduct_credits, get_credits
@@ -304,6 +376,7 @@ class TestPlankBot(unittest.TestCase):
 
     def test_backup_command(self):
         from handlers.admin import backup_cmd
+        from utils.emojis import E_PACKAGE
         from unittest.mock import AsyncMock, MagicMock
         import io
         import zipfile
@@ -323,7 +396,7 @@ class TestPlankBot(unittest.TestCase):
             asyncio.run(backup_cmd(update, context))
             
             # Check status message was prepared
-            update.message.reply_text.assert_called_with("📦 Preparing backup of all source files...")
+            update.message.reply_text.assert_called_with(f"{E_PACKAGE} Preparing backup of all source files...")
             
             # Check status message was deleted
             status_msg.delete.assert_called_once()
@@ -362,6 +435,54 @@ class TestPlankBot(unittest.TestCase):
         self.assertEqual(_categorize("LIMIT_EXCEEDED"), "approved")
         self.assertEqual(_categorize("TIMEOUT"), "error")
         self.assertEqual(_categorize("SOME_UNKNOWN_RESPONSE"), "dead")
+
+    def test_siterem_command(self):
+        from handlers.admin import siterem_cmd, _load_sites, _save_sites
+        update = MagicMock()
+        update.message = AsyncMock()
+        
+        # Setup initial sites list
+        _save_sites(["kyliebaby.com", "gymshark.com"])
+        
+        with patch("handlers.admin._owner_check", return_value=True):
+            context = MagicMock()
+            context.args = ["gymshark.com"]
+            
+            # Call siterem_cmd
+            asyncio.run(siterem_cmd(update, context))
+            
+            # Verify the site was removed
+            remaining = _load_sites()
+            self.assertEqual(remaining, ["kyliebaby.com"])
+            
+            # Test removing non-existent site
+            context.args = ["nonexistent.com"]
+            asyncio.run(siterem_cmd(update, context))
+            
+            # Test with no arguments
+            context.args = []
+            asyncio.run(siterem_cmd(update, context))
+
+    def test_debug_command(self):
+        from handlers.admin import debug_cmd
+        from config import OWNER_DEBUG_MODE
+        update = MagicMock()
+        update.effective_user.id = 6636230545
+        update.message = AsyncMock()
+        
+        # Initially debug mode is off
+        OWNER_DEBUG_MODE[6636230545] = False
+        
+        with patch("handlers.admin._owner_check", return_value=True):
+            context = MagicMock()
+            
+            # Toggle debug mode
+            asyncio.run(debug_cmd(update, context))
+            self.assertTrue(OWNER_DEBUG_MODE[6636230545])
+            
+            # Toggle it off
+            asyncio.run(debug_cmd(update, context))
+            self.assertFalse(OWNER_DEBUG_MODE[6636230545])
 
     def test_debug_info(self):
         print("\n=== DEBUG: DATABASE INFO ===")

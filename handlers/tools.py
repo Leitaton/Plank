@@ -255,6 +255,15 @@ async def proxy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await membership_guard(update, context):
         return
 
+    def _mask_proxy(proxy: str) -> str:
+        parts = proxy.split(":")
+        if len(parts) == 4:
+            host, port, user, password = parts
+            user_masked = user[0] + "***" if len(user) > 0 else "***"
+            pass_masked = password[0] + "***" if len(password) > 0 else "***"
+            return f"{host}:{port}:{user_masked}:{pass_masked}"
+        return proxy
+
     if not context.args:
         await update.message.reply_text(
             f"{section(E_CHAIN, 'Proxy')}\n\n"
@@ -275,7 +284,7 @@ async def proxy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         text = f"{section(E_CHAIN, 'Proxies', f' · {len(proxies)}')}\n\n"
         for p in proxies[:50]:
-            text += f"╰ {p}\n"
+            text += f"╰ {_mask_proxy(p)}\n"
         await update.message.reply_text(text)
 
     elif sub == "add" and (len(context.args) > 1 or (update.message.reply_to_message and update.message.reply_to_message.document)):

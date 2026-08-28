@@ -23,8 +23,8 @@ from telegram.ext import ApplicationHandlerStop
 from config import BOT_TOKEN
 from database import init_db
 
-from handlers.start import start_cmd, help_cmd, plans_cmd, verify_callback, plans_callback
-from handlers.credits import daily_cmd, balance_cmd, redeem_cmd
+from handlers.start import start_cmd, help_cmd, plans_cmd, verify_callback, plans_callback, help_callback
+from handlers.credits import daily_cmd, balance_cmd, redeem_cmd, profile_cmd
 from handlers.gates import (
     sh_cmd, msh_cmd,
     mass_stop_callback, mass_view_callback, mass_retry_callback,
@@ -39,10 +39,11 @@ from handlers.admin import (
     broadcast_cmd, allusers_cmd, admin_callback, site_cmd,
     sitechk_cmd, siteclean_cmd, siteadd_cmd, sitetest_cmd, sitecard_cmd, 
     sitechk_callback, reload_cmd,
-    backup_cmd, maintenance_cmd,
+    backup_cmd, maintenance_cmd, siterem_cmd, debug_cmd,
 )
 
 from utils.helpers import is_owner
+from utils.emojis import E_MAINTENANCE
 import os
 
 async def maintenance_middleware(update: object, context: ContextTypes.DEFAULT_TYPE):
@@ -76,7 +77,7 @@ async def maintenance_middleware(update: object, context: ContextTypes.DEFAULT_T
             
             # Whitelist of PlankBot's commands
             VALID_COMMANDS = {
-                "/start", "/help", "/plans", "/daily", "/balance", "/redeem", 
+                "/start", "/help", "/plans", "/daily", "/balance", "/redeem", "/profile",
                 "/sh", "/msh", "/vbv", "/mvbv", "/bin", "/proxy", "/split", 
                 "/genad", "/scr", "/admin", "/admin_help", "/genplan", 
                 "/setplan", "/addcredits", "/ban", "/unban", "/userinfo", 
@@ -90,7 +91,7 @@ async def maintenance_middleware(update: object, context: ContextTypes.DEFAULT_T
             
             if should_reply:
                 try:
-                    await msg.reply_text("🚧 **Bot is under maintenance.** Please try again later.", parse_mode=ParseMode.MARKDOWN)
+                    await msg.reply_text(f"{E_MAINTENANCE} **Bot is under maintenance.** Please try again later.", parse_mode=ParseMode.MARKDOWN)
                 except Exception:
                     pass
     elif getattr(update, "callback_query", None):
@@ -155,6 +156,7 @@ def main():
     app.add_handler(CommandHandler("daily", daily_cmd))
     app.add_handler(CommandHandler("balance", balance_cmd))
     app.add_handler(CommandHandler("redeem", redeem_cmd))
+    app.add_handler(CommandHandler("profile", profile_cmd))
 
     # ── Gate commands ─────────────────────────────────
     app.add_handler(CommandHandler("sh", sh_cmd))
@@ -185,6 +187,8 @@ def main():
     app.add_handler(CommandHandler("sitechk", sitechk_cmd))
     app.add_handler(CommandHandler("siteclean", siteclean_cmd))
     app.add_handler(CommandHandler("siteadd", siteadd_cmd))
+    app.add_handler(CommandHandler("siterem", siterem_cmd))
+    app.add_handler(CommandHandler("debug", debug_cmd))
     app.add_handler(CommandHandler("sitetest", sitetest_cmd))
     app.add_handler(CommandHandler("sitecard", sitecard_cmd))
     app.add_handler(CommandHandler("maintenance", maintenance_cmd))
@@ -196,6 +200,7 @@ def main():
     app.add_handler(CallbackQueryHandler(mass_stop_callback, pattern=r"^mstop_"))
     app.add_handler(CallbackQueryHandler(mass_view_callback, pattern=r"^mview_"))
     app.add_handler(CallbackQueryHandler(plans_callback, pattern=r"^plan_"))
+    app.add_handler(CallbackQueryHandler(help_callback, pattern=r"^help_"))
     app.add_handler(CallbackQueryHandler(admin_callback, pattern=r"^admin_"))
     app.add_handler(CallbackQueryHandler(mass_retry_callback, pattern=r"^mretry_"))
     app.add_handler(CallbackQueryHandler(sitechk_callback, pattern=r"^sview_|^sstop_"))

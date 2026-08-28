@@ -11,9 +11,12 @@ from config import PLANS, DAILY_COOLDOWN_HOURS, BRAND_NAME, HIT_PUBLIC_CHAT_ID
 from database import (
     ensure_user, get_user, add_credits, set_last_daily,
     set_plan, redeem_code as db_redeem, run_in_db,
-    check_redeem_code_validity,
+    check_redeem_code_validity, get_profile_stats
 )
-from utils.emojis import section, bold, separator, E_MONEY, E_GIFT, E_ARROW, E_CHECK, E_CROSS, E_STAR, E_CLOCK, E_HEART, E_WARN, get_emoji, get_plan_emoji
+from utils.emojis import (
+    section, bold, separator, E_MONEY, E_GIFT, E_ARROW, E_CHECK, E_CROSS, E_STAR, E_CLOCK, E_HEART, E_WARN, get_emoji, get_plan_emoji,
+    E_SECTION_OPEN, E_SECTION_CLOSE, E_USER, E_PERFORMANCE
+)
 from utils.helpers import credits_display, get_plan_info
 from handlers.start import membership_guard
 
@@ -173,4 +176,97 @@ async def redeem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(HIT_PUBLIC_CHAT_ID, public_text)
         except Exception:
             pass
+
+
+async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await membership_guard(update, context):
+        return
+
+    user = update.effective_user
+    db_user = await run_in_db(ensure_user, user.id, user.username or "")
+    
+    stats = await run_in_db(get_profile_stats, user.id)
+    if not stats:
+        await update.message.reply_text("Error loading profile stats.")
+        return
+        
+    username = user.username or user.first_name or "User"
+    
+    joined = stats["joined_at"]
+    joined_time = joined if joined > 0 else time.time()
+    age_days = int((time.time() - joined_time) / 86400)
+    
+    plan = stats["plan"]
+    plan_info = get_plan_info(plan)
+    plan_display = plan_info["display"].upper()
+    plan_emoji = get_plan_emoji(plan)
+    
+    plan_expires = stats["plan_expires"]
+    if plan == "dirt":
+        expiry_str = "Lifetime"
+    elif plan_expires <= 0:
+        expiry_str = "Lifetime"
+    else:
+        remaining_sec = plan_expires - time.time()
+        if remaining_sec <= 0:
+            expiry_str = "Expired"
+        else:
+            exp_days = int(remaining_sec / 86400)
+            exp_hours = int((remaining_sec % 86400) / 3600)
+            expiry_str = f"{exp_days}d {exp_hours}h"
+            
+    bal_str = credits_display(stats["credits"])
+    
+    workers = plan_info.get("workers", 5)
+    cooldown = plan_info.get("cooldown", 2)
+    mass_limit = plan_info.get("mass_limit", 100)
+    daily_bonus = plan_info.get("daily_bonus", 25)
+    
+    if workers <= 5:
+        speed_label = "Slow"
+    elif workers <= 20:
+        speed_label = "Medium"
+    elif workers <= 40:
+        speed_label = "Fast"
+    else:
+        speed_label = "Turbo"
+    speed_str = f"{speed_label} ({workers} workers)"
+    
+    total_checks = stats["total_checks"]
+    hits_count = stats["hits_count"]
+    pct = (hits_count / total_checks * 100) if total_checks > 0 else 0.0
+    
+    total_checks_str = f"{total_checks:,}"
+    hits_str = f"{hits_count:,} ({pct:.1f}%)"
+    
+    rank_str = f"#{stats['rank']} of {stats['total_users']}"
+    
+    cooldown_str = f"{cooldown}s" if cooldown > 0 else "None"
+    
+    text = (
+        f"{E_SECTION_OPEN} {E_STAR} {E_SECTION_CLOSE}  {bold('PROFILE  —  User Card')}\n\n"
+        
+        f"{E_SECTION_OPEN} {E_USER} {E_SECTION_CLOSE}  {bold('Identity')}\n"
+        f"▸  <code>name</code> · {bold(username)}\n"
+        f"▸  <code>id</code>   · {bold(str(user.id))}\n"
+        f"▸  <code>age</code>  · {bold(f'{age_days}d')}\n\n"
+        
+        f"{E_SECTION_OPEN} {E_MONEY} {E_SECTION_CLOSE}  {bold('Plan')}\n"
+        f"▸  <code>tier</code>  · {plan_emoji} {bold(plan_display)}\n"
+        f"▸  <code>exp</code>   · {bold(expiry_str)}\n"
+        f"▸  <code>bal</code>   · {bold(bal_str)} {bold('credits')}\n"
+        f"▸  <code>spd</code>   · {bold(speed_str)}\n"
+        f"▸  <code>cd</code>    · {bold(cooldown_str)}\n"
+        f"▸  <code>mass</code>  · {bold(f'{mass_limit:,}')}\n"
+        f"▸  <code>daily</code> · +{bold(str(daily_bonus))}\n\n"
+        
+        f"{E_SECTION_OPEN} {E_PERFORMANCE} {E_SECTION_CLOSE}  {bold('Performance')}\n"
+        f"▸  <code>total</code> · {bold(total_checks_str)} {bold('checks')}\n"
+        f"▸  <code>hits</code>  · {bold(hits_str)}\n"
+        f"▸  <code>rank</code>  · {bold(rank_str)}\n\n"
+        
+        f"{E_STAR}  {bold('keep grinding  ·  hits matter')}"
+    )
+    
+    await update.message.reply_text(text)
 

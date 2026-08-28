@@ -45,6 +45,68 @@ def classify_response(resp: str) -> tuple[bool, str]:
     return False, ""
 
 
+def map_api_response(raw_resp: str) -> str:
+    """Map raw responses from the new api.py to standard checker codes."""
+    if not raw_resp:
+        return "CARD_DECLINED"
+    
+    r = raw_resp.upper().strip()
+    
+    # 0. Checkpoint / Captcha masking (mapped to CARD_DECLINED)
+    if "CHECKPOINT" in r or "CAPTCHA" in r or "ROBOT" in r:
+        return "CARD_DECLINED"
+    
+    # 1. Success / Charged
+    if "CHARGE_SUCCESS" in r or "THANK_YOU" in r or "ORDER_PLACED" in r or "PROCESSEDRECEIPT" in r or "ORDERCREATIONSUCCEEDED" in r:
+        return "CHARGED"
+    
+    # 2. 3D Secure / Authentication
+    if "3DS" in r or "ACTION_REQUIRED" in r or "OTP" in r or "AUTHENTICATION" in r or "CHALLENGE" in r:
+        return "3DS_REQUIRED"
+        
+    # 3. CVC Declines (which are approved hits)
+    if "CVC" in r or "SECURITY_CODE" in r or "INCORRECT_CVC" in r:
+        return "INVALID_CVC"
+        
+    # 4. Insufficient Funds (which are approved hits)
+    if "INSUFFICIENT" in r:
+        return "INSUFFICIENT_FUNDS"
+        
+    # 5. Expired Card
+    if "EXPIRED" in r:
+        return "EXPIRED_CARD"
+        
+    # 6. Specific Site/API Errors
+    if "NO_PRODUCT" in r or "NO PRODUCT" in r:
+        return "NO_PRODUCT"
+    if "PRICE_OVER_MAX" in r or "PRODUCT_OVER_MAIN" in r or "PRODUCT_OVER_MAX" in r:
+        return "PRICE_OVER_MAX"
+    if "NO_SESSION_TOKEN" in r:
+        return "NO_SESSION_TOKEN"
+        
+    # 7. Declines / Generic errors
+    if any(err in r for err in (
+        "GENERIC_ERROR", "PAYMENT_FAILED", "PROCESSING_ERROR", 
+        "SUBMIT_FAILED", "SUBMIT_REJECTED", "FAILED_RECEIPT"
+    )):
+        return "CARD_DECLINED"
+        
+    # 8. Other errors / API failures
+    if any(err in r for err in (
+        "TIMEOUT", "REJECT", "THROTTLED", "INVALID_RESPONSE", "CART_FAILED", 
+        "SITE_REQUIRES_LOGIN", "GRAPHQL_ERROR", 
+        "NEGOTIATIONRESULTFAILED", "NO_PAYMENT_METHOD", "TOKENIZATION_FAILED", 
+        "SUBMIT_FAILED", "POLL_EMPTY_RECEIPT", "SUBMIT_REJECTED", 
+        "UNKNOWN_SUBMIT_TYPE", "MAX_RETRIES_EXCEEDED", "FAIL"
+    )):
+        return "API_ERROR"
+    if r.startswith("ERROR:"):
+        return "API_ERROR"
+        
+    return r
+
+
+
 # (Concurrency Limiter removed as it was causing global bottlenecking)
 
 # ── Priority Queue/Yielding for Diamond & Bedrock ─────
@@ -131,14 +193,26 @@ async def check_shopify(cc: str, month: str, year: str, cvv: str,
                     elapsed = round(time.time() - start_time, 1)
                     if resp.status == 200:
                         data = await resp.json()
+                        raw_response = data.get("card_response", data.get("Response", "CARD_DECLINED"))
+                        mapped_response = map_api_response(raw_response)
+                        
+                        is_charged = str(data.get("charged", data.get("Charged", "False"))).lower() == "true"
+                        is_approved = str(data.get("approved", data.get("Approved", "False"))).lower() == "true"
+                        
+                        if mapped_response == "CHARGED":
+                            is_charged = True
+                            is_approved = True
+                        elif mapped_response in ("3DS_REQUIRED", "INVALID_CVC", "INSUFFICIENT_FUNDS"):
+                            is_approved = True
+
                         return {
-                            "Response": data.get("card_response", data.get("Response", "CARD_DECLINED")),
+                            "Response": mapped_response,
                             "CC": card_str,
                             "Price": data.get("price", data.get("Price", "0.00")),
                             "Gate": data.get("gate", data.get("Gate", "Shopify Payments")),
                             "Site": data.get("site", data.get("Site", current_site)),
-                            "Charged": str(data.get("charged", data.get("Charged", "False"))),
-                            "Approved": str(data.get("approved", data.get("Approved", "False"))),
+                            "Charged": "True" if is_charged else "False",
+                            "Approved": "True" if is_approved else "False",
                             "Time": data.get("time", f"{elapsed}s"),
                         }
                     else:
@@ -162,7 +236,18 @@ async def check_shopify(cc: str, month: str, year: str, cvv: str,
         def _is_site_error(resp: str) -> bool:
             """Check if the response is a site-level error that can be resolved by rotating sites."""
             r = resp.upper()
-            return "PRODUCT_OVER_MAIN" in r or "PRICE_OVER_MAX" in r or "NO_PRODUCT" in r or "NO PRODUCT" in r
+            SITE_ERRORS = (
+                "PRODUCT_OVER_MAIN", "PRICE_OVER_MAX", "NO_PRODUCT", "NO PRODUCT", "PRODUCT_OVER_MAX",
+                "SITE_REQUIRES_LOGIN", "BUYER_IDENTITY_PRESENTMENT_CURRENCY_DOES_NOT_MATCH",
+                "DELIVERY_NO_DELIVERY_STRATEGY_AVAILABLE_FOR_MERCHANDISE_LINE",
+                "PAYMENTS_INVALID_GATEWAY_FOR_DEVELOPMENT_STORE", "NO_PAYMENT_METHOD",
+                "NO_SESSION_TOKEN", "DELIVERY_ADDRESS2_REQUIRED", "DELIVERY_NO_DELIVERY_STRATEGY_AVAILABLE",
+                "TAX_NEW_TAX_MUST_BE_ACCEPTED", "MERCHANDISE_EXPECTED_PRICE_MISMATCH",
+                "DELIVERY_DELIVERY_LINE_DETAIL_CHANGED", "REQUEST_ERROR",
+                "PAYMENTS_PROPOSED_GATEWAY_UNAVAILABLE", "PAYMENTS_PAYMENT_FLEXIBILITY_TERMS_ID_MISMATCH",
+                "ARTIFACT_DISSATISFACTION"
+            )
+            return any(w in r for w in SITE_ERRORS)
         
         response = result.get("Response", "CARD_DECLINED")
         if _is_site_error(response):
@@ -230,7 +315,8 @@ async def check_site(site: str, proxy: str = None) -> dict:
         ) as resp:
             if resp.status == 200:
                 data = await resp.json()
-                resp_str = data.get("Response", data.get("card_response", "UNKNOWN")).upper()
+                raw_resp = data.get("Response", data.get("card_response", "UNKNOWN"))
+                resp_str = map_api_response(raw_resp).upper()
                 price_str = data.get("Price", data.get("price", "0.00"))
                 try:
                     price_val = float(str(price_str).replace('$', '').replace(',', ''))
@@ -241,6 +327,29 @@ async def check_site(site: str, proxy: str = None) -> dict:
                 # Approved-class hits aren't price-gated; the rest must be cheap enough.
                 if is_valid and label not in ("approved", "order_placed"):
                     is_valid = price_val <= MAX_PRICE
+
+                SITE_ERRORS = (
+                    "ERROR", "TIMEOUT", "PRICE_OVER_MAX", "NO_PRODUCT", "NO_SESSION_TOKEN",
+                    "SITE_REQUIRES_LOGIN", "BUYER_IDENTITY_PRESENTMENT_CURRENCY_DOES_NOT_MATCH",
+                    "DELIVERY_NO_DELIVERY_STRATEGY_AVAILABLE_FOR_MERCHANDISE_LINE",
+                    "PAYMENTS_INVALID_GATEWAY_FOR_DEVELOPMENT_STORE", "NO_PAYMENT_METHOD",
+                    "DELIVERY_ADDRESS2_REQUIRED", "DELIVERY_NO_DELIVERY_STRATEGY_AVAILABLE",
+                    "TAX_NEW_TAX_MUST_BE_ACCEPTED", "MERCHANDISE_EXPECTED_PRICE_MISMATCH",
+                    "DELIVERY_DELIVERY_LINE_DETAIL_CHANGED", "REQUEST_ERROR",
+                    "PAYMENTS_PROPOSED_GATEWAY_UNAVAILABLE", "PAYMENTS_PAYMENT_FLEXIBILITY_TERMS_ID_MISMATCH",
+                    "ARTIFACT_DISSATISFACTION"
+                )
+                if any(err_word in resp_str for err_word in SITE_ERRORS):
+                    return {
+                        "valid": False,
+                        "site": site,
+                        "error": resp_str,
+                        "card_response": resp_str,
+                        "response": label,
+                        "price": price_str,
+                        "time": data.get("Time", data.get("time", "0s")),
+                        "gate": data.get("Gate", data.get("gate", "UNKNOWN"))
+                    }
 
                 return {
                     "valid": is_valid,
