@@ -13,7 +13,7 @@ load_dotenv()
 
 # ── Core ──────────────────────────────────────────────
 BOT_TOKEN = "8863097709:AAEjlcMOhvHE3qWgupS_zhuQ23nNNAe8Rno"
-CHECKER_API_URL = "https://api.iplank.pro"
+CHECKER_API_URL = "https://api-production-bcdb.up.railway.app"
 
 # ── Redis (Upstash) ───────────────────────────────────
 # Set REDIS_URL in the environment / .env, e.g.
@@ -25,7 +25,7 @@ REDIS_URL = os.getenv("REDIS_URL", "rediss://default:gQAAAAAAAaw7AAIgcDFkNDljMjQ
 BIN_CACHE_TTL = int(os.getenv("BIN_CACHE_TTL", "86400"))
 MAX_PRICE = 8.00  # Maximum acceptable product price for Shopify checks (in USD)
 MAX_SITE_TIME = 5.0 # Maximum time in seconds for a site to respond before being marked as slow
-MAX_CONCURRENT_API_REQUESTS = 100  # Max concurrent requests to checker API
+MAX_CONCURRENT_API_REQUESTS = 150  # Max concurrent requests to checker API
 DATABASE_PATH = "plankbot.db"
 
 # ── Telegram MTProto (for /scr channel scraping) ─────
@@ -36,18 +36,18 @@ TELEGRAM_API_HASH = ""
 SCRAPE_LIMIT_DEFAULT = 5000
 
 # ── Community ─────────────────────────────────────────
-REQUIRED_CHAT_ID = -1003979682778
-REQUIRED_CHANNEL_ID = -1003999755491
+REQUIRED_CHAT_ID = -1003916941140
+REQUIRED_CHANNEL_ID = -1003984338128
 
-CHAT_INVITE_LINK = "https://t.me/+FmiZjpHNXPw2MzI1"
-CHANNEL_INVITE_LINK = "https://t.me/+NvlVq70JhbhjMDI1"
+CHAT_INVITE_LINK = "https://t.me/+Uwi2ZeREA2pkZTM8"
+CHANNEL_INVITE_LINK = "https://t.me/+dWYfpgDNzLFiZTM0"
 
 # ── Hit log channels ──────────────────────────────────
-HIT_PUBLIC_CHAT_ID = -1003979682778
-HIT_PRIVATE_CHANNEL_ID = -5154377985
+HIT_PUBLIC_CHAT_ID = -1003916941140
+HIT_PRIVATE_CHANNEL_ID = -1004361992906
 
 # ── Owners (Telegram user IDs) ───────────────────────
-OWNER_IDS = [7985375134]
+OWNER_IDS = [7985375134, 7049316031, 5103928693, 6154246637]
 
 # ── Plans ─────────────────────────────────────────────
 PLANS = {
